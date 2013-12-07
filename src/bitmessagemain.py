@@ -54,7 +54,8 @@ def connectToStream(streamNumber):
         shared.inventorySets[streamNumber].add(row[0])
 
     if sys.platform[0:3] == 'win':
-        maximumNumberOfHalfOpenConnections = 9
+#        maximumNumberOfHalfOpenConnections = 9
+        maximumNumberOfHalfOpenConnections = 100
     else:
         maximumNumberOfHalfOpenConnections = 32
     for i in range(maximumNumberOfHalfOpenConnections):
