@@ -20,8 +20,9 @@ import os
 import sys
 if sys.platform == 'darwin':
     if float("{1}.{2}".format(*sys.version_info)) < 7.5:
-        print "You should use python 2.7.5 or greater."
-        print "Your version: {0}.{1}.{2}".format(*sys.version_info)
+        msg = "You should use python 2.7.5 or greater. Your version: %s", "{0}.{1}.{2}".format(*sys.version_info)
+        logger.critical(msg)
+        print msg
         sys.exit(0)
 
 # Classes
@@ -40,12 +41,6 @@ import helper_bootstrap
 import proofofwork
 
 str_chan = '[chan]'
-
-import sys
-if sys.platform == 'darwin':
-    if float("{1}.{2}".format(*sys.version_info)) < 7.5:
-        logger.critical("You should use python 2.7.5 or greater. Your version: %s", "{0}.{1}.{2}".format(*sys.version_info))
-        sys.exit(0)
 
 def connectToStream(streamNumber):
     shared.streamsInWhichIAmParticipating[streamNumber] = 'no data'
@@ -519,6 +514,7 @@ class MySimpleXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
                 # UPDATE is slow, only update if status is different
                 if queryreturn != [] and (queryreturn[0][0] == 1) != readStatus:
                     sqlExecute('''UPDATE inbox set read = ? WHERE msgid=?''', readStatus, msgid)
+                    shared.UISignalQueue.put(('changedInboxUnread', None))
             queryreturn = sqlQuery('''SELECT msgid, toaddress, fromaddress, subject, received, message, encodingtype, read FROM inbox WHERE msgid=?''', msgid)
             data = '{"inboxMessage":['
             for row in queryreturn:

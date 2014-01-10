@@ -611,6 +611,8 @@ class MyForm(QtGui.QMainWindow):
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
             "setStatusIcon(PyQt_PyObject)"), self.setStatusIcon)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
+            "changedInboxUnread(PyQt_PyObject)"), self.changedInboxUnread)
+        QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
             "rerenderInboxFromLabels()"), self.rerenderInboxFromLabels)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
             "rerenderSentToLabels()"), self.rerenderSentToLabels)
@@ -821,7 +823,7 @@ class MyForm(QtGui.QMainWindow):
 
             if status == 'awaitingpubkey':
                 statusText = _translate(
-                    "MainWindow", "Waiting on their encryption key. Will request it again soon.")
+                    "MainWindow", "Waiting for their encryption key. Will request it again soon.")
             elif status == 'doingpowforpubkey':
                 statusText = _translate(
                     "MainWindow", "Encryption key request queued.")
@@ -829,7 +831,7 @@ class MyForm(QtGui.QMainWindow):
                 statusText = _translate(
                     "MainWindow", "Queued.")
             elif status == 'msgsent':
-                statusText = _translate("MainWindow", "Message sent. Waiting on acknowledgement. Sent at %1").arg(
+                statusText = _translate("MainWindow", "Message sent. Waiting for acknowledgement. Sent at %1").arg(
                     unicode(strftime(shared.config.get('bitmessagesettings', 'timeformat'), localtime(lastactiontime)),'utf-8'))
             elif status == 'msgsentnoackexpected':
                 statusText = _translate("MainWindow", "Message sent. Sent at %1").arg(
@@ -981,8 +983,7 @@ class MyForm(QtGui.QMainWindow):
 
     # create application indicator
     def appIndicatorInit(self, app):
-        self.tray = QSystemTrayIcon(QtGui.QIcon(
-            ":/newPrefix/images/can-icon-24px-red.png"), app)
+        self.initTrayIcon("can-icon-24px-red.png", app)
         if sys.platform[0:3] == 'win':
             traySignal = "activated(QSystemTrayIcon::ActivationReason)"
             QtCore.QObject.connect(self.tray, QtCore.SIGNAL(
@@ -1540,8 +1541,7 @@ class MyForm(QtGui.QMainWindow):
             if self.actionStatus is not None:
                 self.actionStatus.setText(_translate(
                     "MainWindow", "Not Connected"))
-                self.tray.setIcon(QtGui.QIcon(
-                    ":/newPrefix/images/can-icon-24px-red.png"))
+                self.setTrayIconFile("can-icon-24px-red.png")
         if color == 'yellow':
             if self.statusBar().currentMessage() == 'Warning: You are currently not connected. Bitmessage will do the work necessary to send the message but it won\'t send until you connect.':
                 self.statusBar().showMessage('')
@@ -1558,8 +1558,7 @@ class MyForm(QtGui.QMainWindow):
             if self.actionStatus is not None:
                 self.actionStatus.setText(_translate(
                     "MainWindow", "Connected"))
-                self.tray.setIcon(QtGui.QIcon(
-                    ":/newPrefix/images/can-icon-24px-yellow.png"))
+                self.setTrayIconFile("can-icon-24px-yellow.png")
         if color == 'green':
             if self.statusBar().currentMessage() == 'Warning: You are currently not connected. Bitmessage will do the work necessary to send the message but it won\'t send until you connect.':
                 self.statusBar().showMessage('')
@@ -1575,8 +1574,59 @@ class MyForm(QtGui.QMainWindow):
             if self.actionStatus is not None:
                 self.actionStatus.setText(_translate(
                     "MainWindow", "Connected"))
-                self.tray.setIcon(QtGui.QIcon(
-                    ":/newPrefix/images/can-icon-24px-green.png"))
+                self.setTrayIconFile("can-icon-24px-green.png")
+
+    def initTrayIcon(self, iconFileName, app):
+        self.currentTrayIconFileName = iconFileName
+        self.tray = QSystemTrayIcon(
+            self.calcTrayIcon(iconFileName, self.findInboxUnreadCount()), app)
+
+    def setTrayIconFile(self, iconFileName):
+        self.currentTrayIconFileName = iconFileName
+        self.drawTrayIcon(iconFileName, self.findInboxUnreadCount())
+
+    def calcTrayIcon(self, iconFileName, inboxUnreadCount):
+        pixmap = QtGui.QPixmap(":/newPrefix/images/"+iconFileName)
+        if inboxUnreadCount > 0:
+            # choose font and calculate font parameters
+            fontName = "Lucida"
+            fontSize = 10
+            font = QtGui.QFont(fontName, fontSize, QtGui.QFont.Bold)
+            fontMetrics = QtGui.QFontMetrics(font)
+            # text
+            txt = str(inboxUnreadCount)
+            rect = fontMetrics.boundingRect(txt)
+            # margins that we add in the top-right corner
+            marginX = 2
+            marginY = 0 # it looks like -2 is also ok due to the error of metric
+            # if it renders too wide we need to change it to a plus symbol
+            if rect.width() > 20:
+                txt = "+"
+                fontSize = 15
+                font = QtGui.QFont(fontName, fontSize, QtGui.QFont.Bold)
+                fontMetrics = QtGui.QFontMetrics(font)
+                rect = fontMetrics.boundingRect(txt)
+            # draw text
+            painter = QPainter()
+            painter.begin(pixmap)
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 0, 0), Qt.SolidPattern))
+            painter.setFont(font)
+            painter.drawText(24-rect.right()-marginX, -rect.top()+marginY, txt)
+            painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def drawTrayIcon(self, iconFileName, inboxUnreadCount):
+        self.tray.setIcon(self.calcTrayIcon(iconFileName, inboxUnreadCount))
+
+    def changedInboxUnread(self):
+        self.drawTrayIcon(self.currentTrayIconFileName, self.findInboxUnreadCount())
+
+    def findInboxUnreadCount(self):
+        queryreturn = sqlQuery('''SELECT count(*) from inbox WHERE folder='inbox' and read=0''')
+        cnt = 0
+        for row in queryreturn:
+            cnt, = row
+        return int(cnt)
 
     def updateSentItemStatusByHash(self, toRipe, textToDisplay):
         for i in range(self.ui.tableWidgetSent.rowCount()):
@@ -1623,6 +1673,7 @@ class MyForm(QtGui.QMainWindow):
                     "MainWindow", "Message trashed"))
                 self.ui.tableWidgetInbox.removeRow(i)
                 break
+        self.changedInboxUnread()
 
     def displayAlert(self, title, text, exitAfterUserClicksOk):
         self.statusBar().showMessage(text)
@@ -2556,6 +2607,7 @@ class MyForm(QtGui.QMainWindow):
             self.ui.tableWidgetInbox.item(currentRow, 1).setFont(font)
             self.ui.tableWidgetInbox.item(currentRow, 2).setFont(font)
             self.ui.tableWidgetInbox.item(currentRow, 3).setFont(font)
+        self.changedInboxUnread()
         # self.ui.tableWidgetInbox.selectRow(currentRow + 1) 
         # This doesn't de-select the last message if you try to mark it unread, but that doesn't interfere. Might not be necessary.
         # We could also select upwards, but then our problem would be with the topmost message.
@@ -2595,8 +2647,14 @@ class MyForm(QtGui.QMainWindow):
             if shared.safeConfigGetBoolean(toAddressAtCurrentInboxRow, 'chan'):
                 print 'original sent to a chan. Setting the to address in the reply to the chan address.'
                 self.ui.lineEditTo.setText(str(toAddressAtCurrentInboxRow))
-
-        self.ui.comboBoxSendFrom.setCurrentIndex(0)
+        
+        listOfAddressesInComboBoxSendFrom = [str(self.ui.comboBoxSendFrom.itemData(i).toPyObject()) for i in range(self.ui.comboBoxSendFrom.count())]
+        if toAddressAtCurrentInboxRow in listOfAddressesInComboBoxSendFrom:
+            currentIndex = listOfAddressesInComboBoxSendFrom.index(toAddressAtCurrentInboxRow)
+            self.ui.comboBoxSendFrom.setCurrentIndex(currentIndex)
+        else:
+            self.ui.comboBoxSendFrom.setCurrentIndex(0)
+        
         self.ui.textEditMessage.setText('\n\n------------------------------------------------------\n' + unicode(messageAtCurrentInboxRow, 'utf-8)'))
         if self.ui.tableWidgetInbox.item(currentInboxRow, 2).text()[0:3] in ['Re:', 'RE:']:
             self.ui.lineEditSubject.setText(
@@ -3079,7 +3137,6 @@ class MyForm(QtGui.QMainWindow):
     def tableWidgetInboxItemClicked(self):
         currentRow = self.ui.tableWidgetInbox.currentRow()
         if currentRow >= 0:
-            
             font = QFont()
             font.setBold(False)
             self.ui.textEditInboxMessage.setCurrentFont(font)
@@ -3122,6 +3179,7 @@ class MyForm(QtGui.QMainWindow):
                 currentRow, 3).data(Qt.UserRole).toPyObject())
             self.ubuntuMessagingMenuClear(inventoryHash)
             sqlExecute('''update inbox set read=1 WHERE msgid=?''', inventoryHash)
+            self.changedInboxUnread()
 
     def tableWidgetSentItemClicked(self):
         currentRow = self.ui.tableWidgetSent.currentRow()
@@ -3262,7 +3320,7 @@ class settingsDialog(QtGui.QDialog):
             shared.safeConfigGetBoolean('bitmessagesettings', 'useidenticons'))
         
         global languages 
-        languages = ['system','en','eo','fr','de','es','ru','en_pirate','other']
+        languages = ['system','en','eo','fr','de','es','ru','no','en_pirate','other']
         user_countrycode = str(shared.config.get('bitmessagesettings', 'userlocale'))
         if user_countrycode in languages:
             curr_index = languages.index(user_countrycode)
@@ -3669,6 +3727,8 @@ class UISignaler(QThread):
                 self.emit(SIGNAL("updateNumberOfBroadcastsProcessed()"))
             elif command == 'setStatusIcon':
                 self.emit(SIGNAL("setStatusIcon(PyQt_PyObject)"), data)
+            elif command == 'changedInboxUnread':
+                self.emit(SIGNAL("changedInboxUnread(PyQt_PyObject)"), data)
             elif command == 'rerenderInboxFromLabels':
                 self.emit(SIGNAL("rerenderInboxFromLabels()"))
             elif command == 'rerenderSentToLabels':
