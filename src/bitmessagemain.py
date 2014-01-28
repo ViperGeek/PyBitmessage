@@ -60,8 +60,6 @@ def connectToStream(streamNumber):
     for row in queryData:
         shared.inventorySets[streamNumber].add(row[0])
 
-    if sys.platform[0:3] == 'win':
-        maximumNumberOfHalfOpenConnections = 9
     
     if isOurOperatingSystemLimitedToHavingVeryFewHalfOpenConnections():
         # Some XP and Vista systems can only have 10 outgoing connections at a time.
