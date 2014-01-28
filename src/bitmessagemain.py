@@ -65,7 +65,7 @@ def connectToStream(streamNumber):
         # Some XP and Vista systems can only have 10 outgoing connections at a time.
         maximumNumberOfHalfOpenConnections = 9
     else:
-        maximumNumberOfHalfOpenConnections = 64
+        maximumNumberOfHalfOpenConnections = 100
     for i in range(maximumNumberOfHalfOpenConnections):
         a = outgoingSynSender()
         a.setup(streamNumber, selfInitiatedConnections)
