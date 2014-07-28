@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 # Copyright (c) 2012 Jonathan Warren
 # Copyright (c) 2012 The Bitmessage developers
 # Distributed under the MIT/X11 software license. See the accompanying
@@ -48,7 +48,7 @@ import time
 
 # OSX python version check
 import sys
-if sys.platform == 'darwin':
+if 'win' in sys.platform:
     if float("{1}.{2}".format(*sys.version_info)) < 7.5:
         msg = "You should use python 2.7.5 or greater. Your version: %s", "{0}.{1}.{2}".format(*sys.version_info)
         logger.critical(msg)
@@ -154,6 +154,11 @@ class Main:
         # is the application already running?  If yes then exit.
         thisapp = singleton.singleinstance()
 
+        # get curses flag
+        curses = False
+        if '-c' in sys.argv:
+            curses = True
+
         signal.signal(signal.SIGINT, helper_generic.signal_handler)
         # signal.signal(signal.SIGINT, signal.SIG_DFL)
 
@@ -209,15 +214,21 @@ class Main:
         singleListenerThread.start()
 
         if daemon == False and shared.safeConfigGetBoolean('bitmessagesettings', 'daemon') == False:
-            try:
-                from PyQt4 import QtCore, QtGui
-            except Exception as err:
-                print 'PyBitmessage requires PyQt unless you want to run it as a daemon and interact with it using the API. You can download PyQt from http://www.riverbankcomputing.com/software/pyqt/download   or by searching Google for \'PyQt Download\'. If you want to run in daemon mode, see https://bitmessage.org/wiki/Daemon'
-                print 'Error message:', err
-                os._exit(0)
+            if curses == False:
+                try:
+                    from PyQt4 import QtCore, QtGui
+                except Exception as err:
+                    print 'PyBitmessage requires PyQt unless you want to run it as a daemon and interact with it using the API. You can download PyQt from http://www.riverbankcomputing.com/software/pyqt/download   or by searching Google for \'PyQt Download\'. If you want to run in daemon mode, see https://bitmessage.org/wiki/Daemon'
+                    print 'Error message:', err
+                    print 'You can also run PyBitmessage with the new curses interface by providing \'-c\' as a commandline argument.'
+                    os._exit(0)
 
-            import bitmessageqt
-            bitmessageqt.run()
+                import bitmessageqt
+                bitmessageqt.run()
+            else:
+                print 'Running with curses'
+                import bitmessagecurses
+                bitmessagecurses.runwrapper()
         else:
             shared.config.remove_option('bitmessagesettings', 'dontconnect')
 
