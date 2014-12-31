@@ -18,6 +18,8 @@ import sys
 import stat
 import threading
 import time
+import shutil  # used for moving the data folder and copying keys.dat
+import datetime
 from os import path, environ
 from struct import Struct
 import traceback
@@ -472,20 +474,10 @@ def isBitSetWithinBitfield(fourByteString, n):
 
 def decryptAndCheckPubkeyPayload(data, address):
     """
-    With the changes in protocol v3, to maintain backwards compatibility, signatures will be sent
-    the 'old' way during an upgrade period and then a 'new' simpler way after that. We will therefore
-    check the sig both ways. 
-    Old way:
-    signedData = timePubkeyWasSigned(8 bytes) + addressVersion + streamNumber + the decrypted data down through the payloadLengthExtraBytes
-    New way:
-    signedData = all of the payload data from the time to the tag + the decrypted data down through the payloadLengthExtraBytes
-    
-    The timePubkeyWasSigned will be calculated by subtracting 28 days form the embedded expiresTime.
-    """
-    
-    """
-    The time, address version, and stream number are not encrypted so let's 
-    keep that data here for now.
+    Version 4 pubkeys are encrypted. This function is run when we already have the 
+    address to which we want to try to send a message. The 'data' may come either
+    off of the wire or we might have had it already in our inventory when we tried
+    to send a msg to this particular address. 
     """
     try:
         status, addressVersion, streamNumber, ripe = decodeAddress(address)
@@ -495,6 +487,7 @@ def decryptAndCheckPubkeyPayload(data, address):
         readPosition += varintLength
         embeddedStreamNumber, varintLength = decodeVarint(data[readPosition:readPosition + 10])
         readPosition += varintLength
+        storedData = data[20:readPosition] # We'll store the address version and stream number (and some more) in the pubkeys table.
         
         if addressVersion != embeddedAddressVersion:
             logger.info('Pubkey decryption was UNsuccessful due to address version mismatch.')
@@ -503,16 +496,9 @@ def decryptAndCheckPubkeyPayload(data, address):
             logger.info('Pubkey decryption was UNsuccessful due to stream number mismatch.')
             return 'failed'
         
-        expiresTime, = unpack('>Q', data[8:16])
-        TTL = 28 * 24 * 60 * 60
-        signedDataOldMethod = pack('>Q', (expiresTime - TTL)) # the time that the pubkey was signed. 8 bytes. 
-        signedDataOldMethod += data[20:readPosition] # the address version and stream number
-        
         tag = data[readPosition:readPosition + 32]
         readPosition += 32
-        
-        signedDataNewMethod = data[8:readPosition] # the time through the tag
-        
+        signedData = data[8:readPosition] # the time through the tag. More data is appended onto signedData below after the decryption. 
         encryptedData = data[readPosition:]
     
         # Let us try to decrypt the pubkey
@@ -520,7 +506,7 @@ def decryptAndCheckPubkeyPayload(data, address):
         if toAddress != address:
             logger.critical('decryptAndCheckPubkeyPayload failed due to toAddress mismatch. This is very peculiar. toAddress: %s, address %s' % (toAddress, address))
             # the only way I can think that this could happen is if someone encodes their address data two different ways.
-            # That sort of address-malleability should have been prevented earlier. 
+            # That sort of address-malleability should have been caught by the UI or API and an error given to the user. 
             return 'failed'
         try:
             decryptedData = cryptorObject.decrypt(encryptedData)
@@ -543,23 +529,18 @@ def decryptAndCheckPubkeyPayload(data, address):
         specifiedPayloadLengthExtraBytes, specifiedPayloadLengthExtraBytesLength = decodeVarint(
             decryptedData[readPosition:readPosition + 10])
         readPosition += specifiedPayloadLengthExtraBytesLength
-        signedDataOldMethod += decryptedData[:readPosition]
-        signedDataNewMethod += decryptedData[:readPosition]
+        storedData += decryptedData[:readPosition]
+        signedData += decryptedData[:readPosition]
         signatureLength, signatureLengthLength = decodeVarint(
             decryptedData[readPosition:readPosition + 10])
         readPosition += signatureLengthLength
         signature = decryptedData[readPosition:readPosition + signatureLength]
         
-        if highlevelcrypto.verify(signedDataOldMethod, signature, publicSigningKey.encode('hex')):
-            logger.info('ECDSA verify passed (within decryptAndCheckPubkeyPayload, old method)')
+        if highlevelcrypto.verify(signedData, signature, publicSigningKey.encode('hex')):
+            logger.info('ECDSA verify passed (within decryptAndCheckPubkeyPayload)')
         else:
-            logger.info('ECDSA verify failed (within decryptAndCheckPubkeyPayload, old method)')
-            # Try the protocol v3 signing method
-            if highlevelcrypto.verify(signedDataNewMethod, signature, publicSigningKey.encode('hex')):
-                logger.info('ECDSA verify passed (within decryptAndCheckPubkeyPayload, new method)')
-            else:
-                logger.info('ECDSA verify failed (within decryptAndCheckPubkeyPayload, new method)')
-                return 'failed'
+            logger.info('ECDSA verify failed (within decryptAndCheckPubkeyPayload)')
+            return 'failed'
     
         sha = hashlib.new('sha512')
         sha.update(publicSigningKey + publicEncryptionKey)
@@ -570,7 +551,7 @@ def decryptAndCheckPubkeyPayload(data, address):
         if embeddedRipe != ripe:
             # Although this pubkey object had the tag were were looking for and was
             # encrypted with the correct encryption key, it doesn't contain the
-            # correct keys. Someone is either being malicious or using buggy software.
+            # correct pubkeys. Someone is either being malicious or using buggy software.
             logger.info('Pubkey decryption was UNsuccessful due to RIPE mismatch.')
             return 'failed'
         
@@ -587,7 +568,7 @@ def decryptAndCheckPubkeyPayload(data, address):
                                                        )
                     )
     
-        t = (ripe, addressVersion, signedDataOldMethod, int(time.time()), 'yes')
+        t = (ripe, addressVersion, storedData, int(time.time()), 'yes')
         sqlExecute('''INSERT INTO pubkeys VALUES (?,?,?,?,?)''', *t)
         return 'successful'
     except varintDecodeError as e:
@@ -858,5 +839,29 @@ def _checkAndShareBroadcastWithPeers(data):
     with shared.objectProcessorQueueSizeLock:
         shared.objectProcessorQueueSize += len(data)
         objectProcessorQueue.put((objectType,data))
+
+def openKeysFile():
+    if 'linux' in sys.platform:
+        subprocess.call(["xdg-open", shared.appdata + 'keys.dat'])
+    else:
+        os.startfile(shared.appdata + 'keys.dat')
+
+def writeKeysFile():
+    fileName = shared.appdata + 'keys.dat'
+    fileNameBak = fileName + "." + datetime.datetime.now().strftime("%Y%j%H%M%S%f") + '.bak'
+    # create a backup copy to prevent the accidental loss due to the disk write failure
+    try:
+        shutil.copyfile(fileName, fileNameBak)
+        # The backup succeeded.
+        fileNameExisted = True
+    except:
+        # The backup failed. This can happen if the file didn't exist before.
+        fileNameExisted = False
+    # write the file
+    with open(fileName, 'wb') as configfile:
+        shared.config.write(configfile)
+    # delete the backup
+    if fileNameExisted:
+        os.remove(fileNameBak)
 
 from debug import logger

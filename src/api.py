@@ -431,8 +431,7 @@ class MySimpleXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
             if not shared.safeConfigGetBoolean(address, 'chan'):
                 raise APIError(25, 'Specified address is not a chan address. Use deleteAddress API call instead.')
             shared.config.remove_section(address)
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             return 'success'
 
         elif method == 'deleteAddress':
@@ -445,8 +444,7 @@ class MySimpleXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
             if not shared.config.has_section(address):
                 raise APIError(13, 'Could not find this address in your keys.dat file.')
             shared.config.remove_section(address)
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             shared.UISignalQueue.put(('rerenderInboxFromLabels',''))
             shared.UISignalQueue.put(('rerenderSentToLabels',''))
             shared.reloadMyAddressHashes()
@@ -734,6 +732,61 @@ class MySimpleXMLRPCRequestHandler(SimpleXMLRPCRequestHandler):
             shared.UISignalQueue.put(('rerenderInboxFromLabels', ''))
             shared.UISignalQueue.put(('rerenderSubscriptions', ''))
             return 'Added subscription.'
+
+        elif method == 'addAddressToBlackWhiteList':
+            if len(params) == 0:
+                raise APIError(0, 'I need parameters!')
+            if len(params) == 1:
+                address, = params
+                label = ''
+            if len(params) == 2:
+                address, label = params
+                label = self._decode(label, "base64")
+                try:
+                    unicode(label, 'utf-8')
+                except:
+                    raise APIError(17, 'Label is not valid UTF-8 data.')
+            if len(params) > 2:
+                raise APIError(0, 'I need either 1 or 2 parameters!')
+            address = addBMIfNotPresent(address)
+            self._verifyAddress(address)
+
+            table = ''
+            if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':
+                table = 'blacklist'
+            else:
+                table = 'whitelist'
+
+            # First we must check to see if the address is already in the
+            # black-/white-list.
+            queryreturn = sqlQuery('''select * from '''+table+''' where address=?''', address)
+            if queryreturn != []:
+                raise APIError(28, 'You have already black-/white-listed that address.')
+            sqlExecute('''INSERT INTO '''+table+''' VALUES (?,?,?)''',label, address, True)
+            shared.UISignalQueue.put(('rerenderBlackWhiteList', ''))
+            return 'Added black-/white-list entry.'
+
+        elif method == 'removeAddressFromBlackWhiteList':
+            if len(params) != 1:
+                raise APIError(0, 'I need 1 parameter!')
+            address, = params
+            address = addBMIfNotPresent(address)
+
+            table = ''
+            if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':
+                table = 'blacklist'
+            else:
+                table = 'whitelist'
+
+            # First we must check to see if the address is already in the
+            # black-/white-list.
+            queryreturn = sqlQuery('''select * from '''+table+''' where address=?''', address)
+            if queryreturn == []:
+                raise APIError(29, 'That entry does not exist in the black-/white-list.')
+
+            sqlExecute('''DELETE FROM '''+table+''' WHERE address=?''', address)
+            shared.UISignalQueue.put(('rerenderBlackWhiteList', ''))
+            return 'Deleted black-/white-list entry if it existed.'
 
         elif method == 'deleteSubscription':
             if len(params) != 1:

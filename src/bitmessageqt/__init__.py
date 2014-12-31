@@ -154,6 +154,17 @@ def avatarize(address):
             return idcon
     # If no avatar is found
     return identiconize(address)
+    
+def change_translation(locale):
+    global qtranslator
+    qtranslator = QtCore.QTranslator()
+    translationpath = os.path.join(
+        getattr(sys, '_MEIPASS', sys.path[0]),
+        'translations',
+        'bitmessage_' + locale
+    )
+    qtranslator.load(translationpath)
+    QtGui.QApplication.installTranslator(qtranslator)
 
 
 class MyForm(QtGui.QMainWindow):
@@ -222,7 +233,7 @@ class MyForm(QtGui.QMainWindow):
         QtCore.QObject.connect(self.ui.actionHelp, QtCore.SIGNAL(
             "triggered()"), self.click_actionHelp)
 
-    def init_inbox_popup_menu(self):
+    def init_inbox_popup_menu(self, connectSignal=True):
         # Popup menu for the Inbox tab
         self.ui.inboxContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -248,9 +259,10 @@ class MyForm(QtGui.QMainWindow):
                 "MainWindow", "Mark Unread"), self.on_action_InboxMarkUnread)
         self.ui.tableWidgetInbox.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetInbox, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuInbox)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetInbox, QtCore.SIGNAL(
+                'customContextMenuRequested(const QPoint&)'),
+                        self.on_context_menuInbox)
         self.popMenuInbox = QtGui.QMenu(self)
         self.popMenuInbox.addAction(self.actionForceHtml)
         self.popMenuInbox.addAction(self.actionMarkUnread)
@@ -261,7 +273,7 @@ class MyForm(QtGui.QMainWindow):
         self.popMenuInbox.addAction(self.actionSaveMessageAs)
         self.popMenuInbox.addAction(self.actionTrashInboxMessage)
 
-    def init_identities_popup_menu(self):
+    def init_identities_popup_menu(self, connectSignal=True):
         # Popup menu for the Your Identities tab
         self.ui.addressContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -287,9 +299,10 @@ class MyForm(QtGui.QMainWindow):
             self.on_action_SpecialAddressBehaviorDialog)
         self.ui.tableWidgetYourIdentities.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetYourIdentities, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuYourIdentities)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetYourIdentities, QtCore.SIGNAL(
+                'customContextMenuRequested(const QPoint&)'),
+                        self.on_context_menuYourIdentities)
         self.popMenu = QtGui.QMenu(self)
         self.popMenu.addAction(self.actionNew)
         self.popMenu.addSeparator()
@@ -300,7 +313,7 @@ class MyForm(QtGui.QMainWindow):
         self.popMenu.addAction(self.actionSetAvatar)
         self.popMenu.addAction(self.actionSpecialAddressBehavior)
 
-    def init_addressbook_popup_menu(self):
+    def init_addressbook_popup_menu(self, connectSignal=True):
         # Popup menu for the Address Book page
         self.ui.addressBookContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -328,9 +341,10 @@ class MyForm(QtGui.QMainWindow):
                 "MainWindow", "Delete"), self.on_action_AddressBookDelete)
         self.ui.tableWidgetAddressBook.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetAddressBook, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuAddressBook)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetAddressBook, QtCore.SIGNAL(
+                'customContextMenuRequested(const QPoint&)'),
+                        self.on_context_menuAddressBook)
         self.popMenuAddressBook = QtGui.QMenu(self)
         self.popMenuAddressBook.addAction(self.actionAddressBookSend)
         self.popMenuAddressBook.addAction(self.actionAddressBookClipboard)
@@ -340,7 +354,7 @@ class MyForm(QtGui.QMainWindow):
         self.popMenuAddressBook.addAction(self.actionAddressBookNew)
         self.popMenuAddressBook.addAction(self.actionAddressBookDelete)
 
-    def init_subscriptions_popup_menu(self):
+    def init_subscriptions_popup_menu(self, connectSignal=True):
         # Popup menu for the Subscriptions page
         self.ui.subscriptionsContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -363,9 +377,10 @@ class MyForm(QtGui.QMainWindow):
             self.on_action_SubscriptionsSetAvatar)
         self.ui.tableWidgetSubscriptions.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetSubscriptions, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuSubscriptions)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetSubscriptions, QtCore.SIGNAL(
+                'customContextMenuRequested(const QPoint&)'),
+                        self.on_context_menuSubscriptions)
         self.popMenuSubscriptions = QtGui.QMenu(self)
         self.popMenuSubscriptions.addAction(self.actionsubscriptionsNew)
         self.popMenuSubscriptions.addAction(self.actionsubscriptionsDelete)
@@ -376,7 +391,7 @@ class MyForm(QtGui.QMainWindow):
         self.popMenuSubscriptions.addSeparator()
         self.popMenuSubscriptions.addAction(self.actionsubscriptionsClipboard)
 
-    def init_sent_popup_menu(self):
+    def init_sent_popup_menu(self, connectSignal=True):
         # Popup menu for the Sent page
         self.ui.sentContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -392,14 +407,15 @@ class MyForm(QtGui.QMainWindow):
                 "MainWindow", "Force send"), self.on_action_ForceSend)
         self.ui.tableWidgetSent.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetSent, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuSent)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetSent, QtCore.SIGNAL(
+              'customContextMenuRequested(const QPoint&)'),
+                      self.on_context_menuSent)
         # self.popMenuSent = QtGui.QMenu( self )
         # self.popMenuSent.addAction( self.actionSentClipboard )
         # self.popMenuSent.addAction( self.actionTrashSentMessage )
 
-    def init_blacklist_popup_menu(self):
+    def init_blacklist_popup_menu(self, connectSignal=True):
         # Popup menu for the Blacklist page
         self.ui.blacklistContextMenuToolbar = QtGui.QToolBar()
         # Actions
@@ -425,9 +441,10 @@ class MyForm(QtGui.QMainWindow):
             self.on_action_BlacklistSetAvatar)
         self.ui.tableWidgetBlacklist.setContextMenuPolicy(
             QtCore.Qt.CustomContextMenu)
-        self.connect(self.ui.tableWidgetBlacklist, QtCore.SIGNAL(
-            'customContextMenuRequested(const QPoint&)'),
-                     self.on_context_menuBlacklist)
+        if connectSignal:
+            self.connect(self.ui.tableWidgetBlacklist, QtCore.SIGNAL(
+                'customContextMenuRequested(const QPoint&)'),
+                        self.on_context_menuBlacklist)
         self.popMenuBlacklist = QtGui.QMenu(self)
         # self.popMenuBlacklist.addAction( self.actionBlacklistNew )
         self.popMenuBlacklist.addAction(self.actionBlacklistDelete)
@@ -458,8 +475,7 @@ class MyForm(QtGui.QMainWindow):
                         self, 'Message', displayMsg, QtGui.QMessageBox.Yes, QtGui.QMessageBox.No)
                     if reply == QtGui.QMessageBox.Yes:
                         shared.config.remove_section(addressInKeysFile)
-                        with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                            shared.config.write(configfile)
+                        shared.writeKeysFile()
 
         # Configure Bitmessage to start on startup (or remove the
         # configuration) based on the setting in the keys.dat file
@@ -551,12 +567,10 @@ class MyForm(QtGui.QMainWindow):
             "returnPressed()"), self.sentSearchLineEditPressed)
 
         # Initialize the Blacklist or Whitelist
-        if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':
-            self.loadBlackWhiteList()
-        else:
+        if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'white':
             self.ui.tabWidget.setTabText(6, 'Whitelist')
             self.ui.radioButtonWhitelist.click()
-            self.loadBlackWhiteList()
+        self.rerenderBlackWhiteList()
 
         QtCore.QObject.connect(self.ui.tableWidgetYourIdentities, QtCore.SIGNAL(
             "itemChanged(QTableWidgetItem *)"), self.tableWidgetYourIdentitiesItemChanged)
@@ -621,6 +635,8 @@ class MyForm(QtGui.QMainWindow):
             "rerenderAddressBook()"), self.rerenderAddressBook)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
             "rerenderSubscriptions()"), self.rerenderSubscriptions)
+        QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
+            "rerenderBlackWhiteList()"), self.rerenderBlackWhiteList)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
             "removeInboxRowByMsgid(PyQt_PyObject)"), self.removeInboxRowByMsgid)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL(
@@ -1284,7 +1300,7 @@ class MyForm(QtGui.QMainWindow):
     def notifierShow(self, title, subtitle, fromCategory, label):
         global withMessagingMenu
 
-        self.playSound(fromCategory, label);
+        self.playSound(fromCategory, label)
 
         if withMessagingMenu:
             n = Notify.Notification.new(
@@ -1332,7 +1348,7 @@ class MyForm(QtGui.QMainWindow):
                 reply = QtGui.QMessageBox.question(self, _translate("MainWindow", "Open keys.dat?"), _translate(
                     "MainWindow", "You may manage your keys by editing the keys.dat file stored in\n %1 \nIt is important that you back up this file. Would you like to open the file now? (Be sure to close Bitmessage before making any changes.)").arg(shared.appdata), QtGui.QMessageBox.Yes, QtGui.QMessageBox.No)
             if reply == QtGui.QMessageBox.Yes:
-                self.openKeysFile()
+                shared.openKeysFile()
 
     def click_actionDeleteAllTrashedMessages(self):
         if QtGui.QMessageBox.question(self, _translate("MainWindow", "Delete trash?"), _translate("MainWindow", "Are you sure you want to delete all trashed messages?"), QtGui.QMessageBox.Yes, QtGui.QMessageBox.No) == QtGui.QMessageBox.No:
@@ -1419,18 +1435,19 @@ class MyForm(QtGui.QMainWindow):
         if self.connectDialogInstance.exec_():
             if self.connectDialogInstance.ui.radioButtonConnectNow.isChecked():
                 shared.config.remove_option('bitmessagesettings', 'dontconnect')
-                with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                    shared.config.write(configfile)
+                shared.writeKeysFile()
             else:
                 self.click_actionSettings()
 
-    def openKeysFile(self):
-        if 'linux' in sys.platform:
-            subprocess.call(["xdg-open", shared.appdata + 'keys.dat'])
-        else:
-            os.startfile(shared.appdata + 'keys.dat')
-
     def changeEvent(self, event):
+        if event.type() == QtCore.QEvent.LanguageChange:
+            self.ui.retranslateUi(self)
+            self.init_inbox_popup_menu(False)
+            self.init_identities_popup_menu(False)
+            self.init_addressbook_popup_menu(False)
+            self.init_subscriptions_popup_menu(False)
+            self.init_sent_popup_menu(False)
+            self.init_blacklist_popup_menu(False)
         if event.type() == QtCore.QEvent.WindowStateChange:
             if self.windowState() & QtCore.Qt.WindowMinimized:
                 self.actionShow.setChecked(False)
@@ -1832,6 +1849,28 @@ class MyForm(QtGui.QMainWindow):
                 newItem.setTextColor(QtGui.QColor(128, 128, 128))
             self.ui.tableWidgetSubscriptions.setItem(0, 1, newItem)
 
+    def rerenderBlackWhiteList(self):
+        self.ui.tableWidgetBlacklist.setRowCount(0)
+        listType = shared.config.get('bitmessagesettings', 'blackwhitelist')
+        if listType == 'black':
+            queryreturn = sqlQuery('''SELECT label, address, enabled FROM blacklist''')
+        else:
+            queryreturn = sqlQuery('''SELECT label, address, enabled FROM whitelist''')
+        for row in queryreturn:
+            label, address, enabled = row
+            self.ui.tableWidgetBlacklist.insertRow(0)
+            newItem = QtGui.QTableWidgetItem(unicode(label, 'utf-8'))
+            if not enabled:
+                newItem.setTextColor(QtGui.QColor(128, 128, 128))
+            newItem.setIcon(avatarize(address))
+            self.ui.tableWidgetBlacklist.setItem(0, 0, newItem)
+            newItem = QtGui.QTableWidgetItem(address)
+            newItem.setFlags(
+                QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            if not enabled:
+                newItem.setTextColor(QtGui.QColor(128, 128, 128))
+            self.ui.tableWidgetBlacklist.setItem(0, 1, newItem)
+
     def click_pushButtonSend(self):
         self.statusBar().showMessage('')
         toAddresses = str(self.ui.lineEditTo.text())
@@ -2230,28 +2269,6 @@ class MyForm(QtGui.QMainWindow):
                         shared.objectProcessorQueueSize += len(payload)
                         shared.objectProcessorQueue.put((objectType,payload))
 
-    def loadBlackWhiteList(self):
-        # Initialize the Blacklist or Whitelist table
-        listType = shared.config.get('bitmessagesettings', 'blackwhitelist')
-        if listType == 'black':
-            queryreturn = sqlQuery('''SELECT label, address, enabled FROM blacklist''')
-        else:
-            queryreturn = sqlQuery('''SELECT label, address, enabled FROM whitelist''')
-        for row in queryreturn:
-            label, address, enabled = row
-            self.ui.tableWidgetBlacklist.insertRow(0)
-            newItem = QtGui.QTableWidgetItem(unicode(label, 'utf-8'))
-            if not enabled:
-                newItem.setTextColor(QtGui.QColor(128, 128, 128))
-            newItem.setIcon(avatarize(address))
-            self.ui.tableWidgetBlacklist.setItem(0, 0, newItem)
-            newItem = QtGui.QTableWidgetItem(address)
-            newItem.setFlags(
-                QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
-            if not enabled:
-                newItem.setTextColor(QtGui.QColor(128, 128, 128))
-            self.ui.tableWidgetBlacklist.setItem(0, 1, newItem)
-
     def click_pushButtonStatusIcon(self):
         print 'click_pushButtonStatusIcon'
         self.iconGlossaryInstance = iconGlossaryDialog(self)
@@ -2287,6 +2304,7 @@ class MyForm(QtGui.QMainWindow):
             lang_ind = int(self.settingsDialogInstance.ui.languageComboBox.currentIndex())
             if not languages[lang_ind] == 'other':
                 shared.config.set('bitmessagesettings', 'userlocale', languages[lang_ind])
+                change_translation(languages[lang_ind])
             
             if int(shared.config.get('bitmessagesettings', 'port')) != int(self.settingsDialogInstance.ui.lineEditTCPPort.text()):
                 if not shared.safeConfigGetBoolean('bitmessagesettings', 'dontconnect'):
@@ -2414,8 +2432,7 @@ class MyForm(QtGui.QMainWindow):
             # shared.config.set('bitmessagesettings', 'maxcores',
             # str(self.settingsDialogInstance.ui.comboBoxMaxCores.currentText()))
 
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
 
             if 'win32' in sys.platform or 'win64' in sys.platform:
             # Auto-startup for Windows
@@ -2460,8 +2477,7 @@ class MyForm(QtGui.QMainWindow):
                     os.makedirs(shared.appdata)
                 sqlStoredProcedure('movemessagstoappdata')
                 # Write the keys.dat file to disk in the new location
-                with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                    shared.config.write(configfile)
+                shared.writeKeysFile()
                 # Write the knownnodes.dat file to disk in the new location
                 shared.knownNodesLock.acquire()
                 output = open(shared.appdata + 'knownnodes.dat', 'wb')
@@ -2480,21 +2496,19 @@ class MyForm(QtGui.QMainWindow):
     def click_radioButtonBlacklist(self):
         if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'white':
             shared.config.set('bitmessagesettings', 'blackwhitelist', 'black')
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             # self.ui.tableWidgetBlacklist.clearContents()
             self.ui.tableWidgetBlacklist.setRowCount(0)
-            self.loadBlackWhiteList()
+            self.rerenderBlackWhiteList()
             self.ui.tabWidget.setTabText(6, 'Blacklist')
 
     def click_radioButtonWhitelist(self):
         if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':
             shared.config.set('bitmessagesettings', 'blackwhitelist', 'white')
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             # self.ui.tableWidgetBlacklist.clearContents()
             self.ui.tableWidgetBlacklist.setRowCount(0)
-            self.loadBlackWhiteList()
+            self.rerenderBlackWhiteList()
             self.ui.tabWidget.setTabText(6, 'Whitelist')
 
     def click_pushButtonAddBlacklist(self):
@@ -2563,8 +2577,7 @@ class MyForm(QtGui.QMainWindow):
                 shared.config.set(str(addressAtCurrentRow), 'mailinglistname', str(
                     self.dialog.ui.lineEditMailingListName.text().toUtf8()))
                 self.ui.tableWidgetYourIdentities.item(currentRow, 1).setTextColor(QtGui.QColor(137, 04, 177)) # magenta
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             self.rerenderInboxToLabels()
 
     def click_NewAddressDialog(self):
@@ -2663,15 +2676,19 @@ class MyForm(QtGui.QMainWindow):
     def on_action_InboxMarkUnread(self):
         font = QFont()
         font.setBold(True)
+        inventoryHashesToMarkUnread = []
         for row in self.ui.tableWidgetInbox.selectedIndexes():
             currentRow = row.row()
             inventoryHashToMarkUnread = str(self.ui.tableWidgetInbox.item(
                 currentRow, 3).data(Qt.UserRole).toPyObject())
-            sqlExecute('''UPDATE inbox SET read=0 WHERE msgid=?''', inventoryHashToMarkUnread)
+            inventoryHashesToMarkUnread.append(inventoryHashToMarkUnread)
             self.ui.tableWidgetInbox.item(currentRow, 0).setFont(font)
             self.ui.tableWidgetInbox.item(currentRow, 1).setFont(font)
             self.ui.tableWidgetInbox.item(currentRow, 2).setFont(font)
             self.ui.tableWidgetInbox.item(currentRow, 3).setFont(font)
+        #sqlite requires the exact number of ?s to prevent injection
+        sqlExecute('''UPDATE inbox SET read=0 WHERE msgid IN (%s)''' % (
+            "?," * len(inventoryHashesToMarkUnread))[:-1], *inventoryHashesToMarkUnread)
         self.changedInboxUnread()
         # self.ui.tableWidgetInbox.selectRow(currentRow + 1) 
         # This doesn't de-select the last message if you try to mark it unread, but that doesn't interfere. Might not be necessary.
@@ -3066,8 +3083,7 @@ class MyForm(QtGui.QMainWindow):
         addressAtCurrentRow = str(
             self.ui.tableWidgetYourIdentities.item(currentRow, 1).text())
         shared.config.set(addressAtCurrentRow, 'enabled', 'true')
-        with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-            shared.config.write(configfile)
+        shared.writeKeysFile()
         self.ui.tableWidgetYourIdentities.item(
             currentRow, 0).setTextColor(QApplication.palette().text().color())
         self.ui.tableWidgetYourIdentities.item(
@@ -3093,8 +3109,7 @@ class MyForm(QtGui.QMainWindow):
             currentRow, 2).setTextColor(QtGui.QColor(128, 128, 128))
         if shared.safeConfigGetBoolean(addressAtCurrentRow, 'mailinglist'):
             self.ui.tableWidgetYourIdentities.item(currentRow, 1).setTextColor(QtGui.QColor(137, 04, 177)) # magenta
-        with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-            shared.config.write(configfile)
+        shared.writeKeysFile()
         shared.reloadMyAddressHashes()
 
     def on_action_YourIdentitiesClipboard(self):
@@ -3183,6 +3198,7 @@ class MyForm(QtGui.QMainWindow):
             self.rerenderInboxToLabels()
             self.rerenderSentFromLabels()
             self.rerenderSentToLabels()
+            self.rerenderBlackWhiteList()
         
     def on_context_menuYourIdentities(self, point):
         self.popMenu.exec_(
@@ -3291,8 +3307,7 @@ class MyForm(QtGui.QMainWindow):
                 currentRow, 1).text()
             shared.config.set(str(addressAtCurrentRow), 'label', str(
                 self.ui.tableWidgetYourIdentities.item(currentRow, 0).text().toUtf8()))
-            with open(shared.appdata + 'keys.dat', 'wb') as configfile:
-                shared.config.write(configfile)
+            shared.writeKeysFile()
             self.rerenderComboBoxSendFrom()
             # self.rerenderInboxFromLabels()
             self.rerenderInboxToLabels()
@@ -3410,7 +3425,7 @@ class settingsDialog(QtGui.QDialog):
             shared.safeConfigGetBoolean('bitmessagesettings', 'replybelow'))
         
         global languages 
-        languages = ['system','en','eo','fr','de','es','ru','no','ar','zh_cn','ja','nl','en_pirate','other']
+        languages = ['system','en','eo','fr','de','es','ru','no','ar','zh_cn','ja','nl','cs','en_pirate','other']
         user_countrycode = str(shared.config.get('bitmessagesettings', 'userlocale'))
         if user_countrycode in languages:
             curr_index = languages.index(user_countrycode)
@@ -3838,6 +3853,8 @@ class UISignaler(QThread):
                 self.emit(SIGNAL("rerenderAddressBook()"))
             elif command == 'rerenderSubscriptions':
                 self.emit(SIGNAL("rerenderSubscriptions()"))
+            elif command == 'rerenderBlackWhiteList':
+                self.emit(SIGNAL("rerenderBlackWhiteList()"))
             elif command == 'removeInboxRowByMsgid':
                 self.emit(SIGNAL("removeInboxRowByMsgid(PyQt_PyObject)"), data)
             elif command == 'alert':
@@ -3849,16 +3866,7 @@ class UISignaler(QThread):
 
 def run():
     app = QtGui.QApplication(sys.argv)
-    translator = QtCore.QTranslator()
-    
-    translationpath = os.path.join(
-        getattr(sys, '_MEIPASS', sys.path[0]),
-        'translations',
-        'bitmessage_' + l10n.getTranslationLanguage()
-    )
-    translator.load(translationpath)
-
-    QtGui.QApplication.installTranslator(translator)
+    change_translation(l10n.getTranslationLanguage())
     app.setStyleSheet("QStatusBar::item { border: 0px solid black }")
     myapp = MyForm()
 
