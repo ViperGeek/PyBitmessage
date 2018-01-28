@@ -18,15 +18,38 @@ Use: `from debug import logger` to import this facility into whatever module you
 '''
 import logging
 import logging.config
-import shared
+import os
 import sys
 import helper_startup
+import state
 helper_startup.loadConfig()
 
-# TODO(xj9): Get from a config file.
-log_level = 'DEBUG'
+# Now can be overriden from a config file, which uses standard python logging.config.fileConfig interface
+# examples are here: https://bitmessage.org/forum/index.php/topic,4820.msg11163.html#msg11163
+log_level = 'WARNING'
+
+def log_uncaught_exceptions(ex_cls, ex, tb):
+    logging.critical('Unhandled exception', exc_info=(ex_cls, ex, tb))
 
 def configureLogging():
+    have_logging = False
+    try:
+        logging.config.fileConfig(os.path.join (state.appdata, 'logging.dat'))
+        have_logging = True
+        print "Loaded logger configuration from %s" % (os.path.join(state.appdata, 'logging.dat'))
+    except:
+        if os.path.isfile(os.path.join(state.appdata, 'logging.dat')):
+            print "Failed to load logger configuration from %s, using default logging config" % (os.path.join(state.appdata, 'logging.dat'))
+            print sys.exc_info()
+        else:
+            # no need to confuse the user if the logger config is missing entirely
+            print "Using default logger configuration"
+    
+    sys.excepthook = log_uncaught_exceptions
+
+    if have_logging:
+        return False
+
     logging.config.dictConfig({
         'version': 1,
         'formatters': {
@@ -39,15 +62,16 @@ def configureLogging():
                 'class': 'logging.StreamHandler',
                 'formatter': 'default',
                 'level': log_level,
-                'stream': 'ext://sys.stdout'
+                'stream': 'ext://sys.stderr'
             },
             'file': {
                 'class': 'logging.handlers.RotatingFileHandler',
                 'formatter': 'default',
                 'level': log_level,
-                'filename': shared.appdata + 'debug.log',
+                'filename': state.appdata + 'debug.log',
                 'maxBytes': 2097152, # 2 MiB
                 'backupCount': 1,
+                'encoding': 'UTF-8',
             }
         },
         'loggers': {
@@ -69,13 +93,17 @@ def configureLogging():
             'handlers': ['console'],
         },
     })
+    return True
+
 # TODO (xj9): Get from a config file.
 #logger = logging.getLogger('console_only')
-configureLogging()
-if '-c' in sys.argv:
-    logger = logging.getLogger('file_only')
+if configureLogging():
+    if '-c' in sys.argv:
+        logger = logging.getLogger('file_only')
+    else:
+        logger = logging.getLogger('both')
 else:
-    logger = logging.getLogger('both')
+    logger = logging.getLogger('default')
 
 def restartLoggingInUpdatedAppdataLocation():
     global logger
@@ -83,9 +111,11 @@ def restartLoggingInUpdatedAppdataLocation():
         logger.removeHandler(i)
         i.flush()
         i.close()
-    configureLogging()
-    if '-c' in sys.argv:
-        logger = logging.getLogger('file_only')
+    if configureLogging():
+        if '-c' in sys.argv:
+            logger = logging.getLogger('file_only')
+        else:
+            logger = logging.getLogger('both')
     else:
-        logger = logging.getLogger('both')
+        logger = logging.getLogger('default')
 

@@ -7,3 +7,10 @@ src/dist
 src/.project
 src/.pydevproject
 src/.settings/
+src/**/.dll
+src/**/*.o
+src/**/*.so
+build/lib.*
+build/temp.*
+dist
+*.egg-info

@@ -1,8 +1,9 @@
 
 import logging
+import os
 import time
 
-import shared
+from bmconfigparser import BMConfigParser
 
 
 #logger = logging.getLogger(__name__)
@@ -16,6 +17,29 @@ DEFAULT_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 encoding = DEFAULT_ENCODING
 language = DEFAULT_LANGUAGE
 
+windowsLanguageMap = {
+    "ar": "arabic",
+    "cs": "czech",
+    "da": "danish",
+    "de": "german",
+    "en": "english",
+    "eo": "esperanto",
+    "fr": "french",
+    "it": "italian",
+    "ja": "japanese",
+    "nl": "dutch",
+    "no": "norwegian",
+    "pl": "polish",
+    "pt": "portuguese",
+    "ru": "russian",
+    "sk": "slovak",
+    "zh": "chinese",
+    "zh_CN": "chinese-simplified",
+    "zh_HK": "chinese-traditional",
+    "zh_SG": "chinese-simplified",
+    "zh_TW": "chinese-traditional"
+}
+
 try:
     import locale
     encoding = locale.getpreferredencoding(True) or DEFAULT_ENCODING
@@ -24,8 +48,8 @@ except:
     logger.exception('Could not determine language or encoding')
 
 
-if shared.config.has_option('bitmessagesettings', 'timeformat'):
-    time_format = shared.config.get('bitmessagesettings', 'timeformat')
+if BMConfigParser().has_option('bitmessagesettings', 'timeformat'):
+    time_format = BMConfigParser().get('bitmessagesettings', 'timeformat')
     #Test the format string
     try:
         time.strftime(time_format)
@@ -55,6 +79,11 @@ if time_format != DEFAULT_TIME_FORMAT:
         time_format = DEFAULT_TIME_FORMAT
         encoding = DEFAULT_ENCODING
 
+def setlocale(category, newlocale):
+    locale.setlocale(category, newlocale)
+    # it looks like some stuff isn't initialised yet when this is called the
+    # first time and its init gets the locale settings from the environment
+    os.environ["LC_ALL"] = newlocale
 
 def formatTimestamp(timestamp = None, as_unicode = True):
     #For some reason some timestamps are strings so we need to sanitize.
@@ -83,11 +112,25 @@ def formatTimestamp(timestamp = None, as_unicode = True):
 
 def getTranslationLanguage():
     userlocale = None
-    if shared.config.has_option('bitmessagesettings', 'userlocale'):
-        userlocale = shared.config.get('bitmessagesettings', 'userlocale')
+    if BMConfigParser().has_option('bitmessagesettings', 'userlocale'):
+        userlocale = BMConfigParser().get('bitmessagesettings', 'userlocale')
 
     if userlocale in [None, '', 'system']:
         return language
 
     return userlocale
     
+def getWindowsLocale(posixLocale):
+    if posixLocale in windowsLanguageMap:
+        return windowsLanguageMap[posixLocale]
+    if "." in posixLocale:
+        loc = posixLocale.split(".", 1)
+        if loc[0] in windowsLanguageMap:
+            return windowsLanguageMap[loc[0]]
+    if "_" in posixLocale:
+        loc = posixLocale.split("_", 1)
+        if loc[0] in windowsLanguageMap:
+            return windowsLanguageMap[loc[0]]
+    if posixLocale != DEFAULT_LANGUAGE:
+        return getWindowsLocale(DEFAULT_LANGUAGE)
+    return None

@@ -11,13 +11,33 @@ def sqlQuery(sqlStatement, *args):
 
     if args == ():
         sqlSubmitQueue.put('')
+    elif type(args[0]) in [list, tuple]:
+        sqlSubmitQueue.put(args[0])
     else:
         sqlSubmitQueue.put(args)
     
-    queryreturn = sqlReturnQueue.get()
+    queryreturn, rowcount = sqlReturnQueue.get()
     sqlLock.release()
 
     return queryreturn
+
+def sqlExecuteChunked(sqlStatement, idCount, *args):
+    #SQLITE_MAX_VARIABLE_NUMBER, unfortunately getting/setting isn't exposed to python
+    sqlExecuteChunked.chunkSize = 999
+
+    if idCount == 0 or idCount > len(args):
+        return 0
+
+    totalRowCount = 0
+    with sqlLock:
+        for i in range(len(args)-idCount, len(args), sqlExecuteChunked.chunkSize - (len(args)-idCount)):
+            sqlSubmitQueue.put(sqlStatement)
+            # first static args, and then iterative chunk
+            sqlSubmitQueue.put(args[0:len(args)-idCount] + args[i:i+sqlExecuteChunked.chunkSize - (len(args)-idCount)])
+            retVal = sqlReturnQueue.get()
+            totalRowCount += retVal[1]
+        sqlSubmitQueue.put('commit')
+    return totalRowCount
 
 def sqlExecute(sqlStatement, *args):
     sqlLock.acquire()
@@ -28,9 +48,10 @@ def sqlExecute(sqlStatement, *args):
     else:
         sqlSubmitQueue.put(args)
     
-    sqlReturnQueue.get()
+    queryreturn, rowcount = sqlReturnQueue.get()
     sqlSubmitQueue.put('commit')
     sqlLock.release()
+    return rowcount
 
 def sqlStoredProcedure(procName):
     sqlLock.acquire()

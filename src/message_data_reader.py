@@ -5,10 +5,12 @@
 import sqlite3
 from time import strftime, localtime
 import sys
-import shared
-import string
+import paths
+import queues
+import state
+from binascii import hexlify
 
-appdata = shared.lookupAppdataFolder()
+appdata = paths.lookupAppdataFolder()
 
 conn = sqlite3.connect( appdata + 'messages.dat' )
 conn.text_factory = str
@@ -31,7 +33,7 @@ def readSent():
     output = cur.fetchall()
     for row in output:
         msgid, toaddress, toripe, fromaddress, subject, message, ackdata, lastactiontime, sleeptill, status, retrynumber, folder, encodingtype, ttl = row
-        print msgid.encode('hex'), toaddress, 'toripe:', toripe.encode('hex'), 'fromaddress:', fromaddress, 'ENCODING TYPE:', encodingtype, 'SUBJECT:', repr(subject), 'MESSAGE:', repr(message), 'ACKDATA:', ackdata.encode('hex'), lastactiontime, status, retrynumber, folder
+        print hexlify(msgid), toaddress, 'toripe:', hexlify(toripe), 'fromaddress:', fromaddress, 'ENCODING TYPE:', encodingtype, 'SUBJECT:', repr(subject), 'MESSAGE:', repr(message), 'ACKDATA:', hexlify(ackdata), lastactiontime, status, retrynumber, folder
 
 def readSubscriptions():
     print 'Printing everything in subscriptions table:'
@@ -50,7 +52,7 @@ def readPubkeys():
     output = cur.fetchall()
     for row in output:
         address, transmitdata, time, usedpersonally = row
-        print 'Address:', address, '\tTime first broadcast:', unicode(strftime('%a, %d %b %Y  %I:%M %p',localtime(time)),'utf-8'), '\tUsed by me personally:', usedpersonally, '\tFull pubkey message:', transmitdata.encode('hex')
+        print 'Address:', address, '\tTime first broadcast:', unicode(strftime('%a, %d %b %Y  %I:%M %p',localtime(time)),'utf-8'), '\tUsed by me personally:', usedpersonally, '\tFull pubkey message:', hexlify(transmitdata)
 
 def readInventory():
     print 'Printing everything in inventory table:'
@@ -60,7 +62,7 @@ def readInventory():
     output = cur.fetchall()
     for row in output:
         hash, objecttype, streamnumber, payload, expirestime = row
-        print 'Hash:', hash.encode('hex'), objecttype, streamnumber, '\t', payload.encode('hex'), '\t', unicode(strftime('%a, %d %b %Y  %I:%M %p',localtime(expirestime)),'utf-8')
+        print 'Hash:', hexlify(hash), objecttype, streamnumber, '\t', hexlify(payload), '\t', unicode(strftime('%a, %d %b %Y  %I:%M %p',localtime(expirestime)),'utf-8')
 
 
 def takeInboxMessagesOutOfTrash():
@@ -85,7 +87,7 @@ def markAllInboxMessagesAsUnread():
     cur.execute(item, parameters)
     output = cur.fetchall()
     conn.commit()
-    shared.UISignalQueue.put(('changedInboxUnread', None))
+    queues.UISignalQueue.put(('changedInboxUnread', None))
     print 'done'
 
 def vacuum():

@@ -8,28 +8,33 @@ import sys
 import string
 from subprocess import call  # used when the API must execute an outside program
 import traceback
+from binascii import hexlify
 
 from pyelliptic.openssl import OpenSSL
 import highlevelcrypto
 from addresses import *
+from bmconfigparser import BMConfigParser
 import helper_generic
 from helper_generic import addDataPadding
 import helper_bitcoin
 import helper_inbox
+import helper_msgcoding
 import helper_sent
 from helper_sql import *
+import protocol
+import queues
+import state
 import tr
 from debug import logger
 import l10n
 
-
 class objectProcessor(threading.Thread):
     """
     The objectProcessor thread, of which there is only one, receives network
-    objecs (msg, broadcast, pubkey, getpubkey) from the receiveDataThreads.
+    objects (msg, broadcast, pubkey, getpubkey) from the receiveDataThreads.
     """
     def __init__(self):
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name="objectProcessor")
         """
         It may be the case that the last time Bitmessage was running, the user
         closed it before it finished processing everything in the
@@ -39,18 +44,18 @@ class objectProcessor(threading.Thread):
         """
         queryreturn = sqlQuery(
             '''SELECT objecttype, data FROM objectprocessorqueue''')
-        with shared.objectProcessorQueueSizeLock:
-            for row in queryreturn:
-                objectType, data = row
-                shared.objectProcessorQueueSize += len(data)
-                shared.objectProcessorQueue.put((objectType,data))
+        for row in queryreturn:
+            objectType, data = row
+            queues.objectProcessorQueue.put((objectType,data))
         sqlExecute('''DELETE FROM objectprocessorqueue''')
         logger.debug('Loaded %s objects from disk into the objectProcessorQueue.' % str(len(queryreturn)))
 
 
     def run(self):
         while True:
-            objectType, data = shared.objectProcessorQueue.get()
+            objectType, data = queues.objectProcessorQueue.get()
+
+            self.checkackdata(data)
 
             try:
                 if objectType == 0: # getpubkey
@@ -64,31 +69,60 @@ class objectProcessor(threading.Thread):
                 elif objectType == 'checkShutdownVariable': # is more of a command, not an object type. Is used to get this thread past the queue.get() so that it will check the shutdown variable.
                     pass
                 else:
-                    logger.critical('Error! Bug! The class_objectProcessor was passed an object type it doesn\'t recognize: %s' % str(objectType))
+                    if isinstance(objectType, int):
+                        logger.info('Don\'t know how to handle object type 0x%08X', objectType)
+                    else:
+                        logger.info('Don\'t know how to handle object type %s', objectType)
+            except helper_msgcoding.DecompressionSizeException as e:
+                logger.error("The object is too big after decompression (stopped decompressing at %ib, your configured limit %ib). Ignoring", e.size, BMConfigParser().safeGetInt("zlib", "maxsize"))
             except varintDecodeError as e:
                 logger.debug("There was a problem with a varint while processing an object. Some details: %s" % e)
             except Exception as e:
                 logger.critical("Critical error within objectProcessorThread: \n%s" % traceback.format_exc())
 
-            with shared.objectProcessorQueueSizeLock:
-                shared.objectProcessorQueueSize -= len(data) # We maintain objectProcessorQueueSize so that we will slow down requesting objects if too much data accumulates in the queue.
-
-            if shared.shutdown:
+            if state.shutdown:
                 time.sleep(.5) # Wait just a moment for most of the connections to close
                 numberOfObjectsThatWereInTheObjectProcessorQueue = 0
                 with SqlBulkExecute() as sql:
-                    while shared.objectProcessorQueueSize > 1:
-                        objectType, data = shared.objectProcessorQueue.get()
+                    while queues.objectProcessorQueue.curSize > 0:
+                        objectType, data = queues.objectProcessorQueue.get()
                         sql.execute('''INSERT INTO objectprocessorqueue VALUES (?,?)''',
                                    objectType,data)
-                        with shared.objectProcessorQueueSizeLock:
-                            shared.objectProcessorQueueSize -= len(data) # We maintain objectProcessorQueueSize so that we will slow down requesting objects if too much data accumulates in the queue.
                         numberOfObjectsThatWereInTheObjectProcessorQueue += 1
                 logger.debug('Saved %s objects from the objectProcessorQueue to disk. objectProcessorThread exiting.' % str(numberOfObjectsThatWereInTheObjectProcessorQueue))
-                shared.shutdown = 2
+                state.shutdown = 2
                 break
+
+    def checkackdata(self, data):
+        # Let's check whether this is a message acknowledgement bound for us.
+        if len(data) < 32:
+            return
+        readPosition = 20  # bypass the nonce, time, and object type
+        # chomp version number
+        versionNumber, varIntLength = decodeVarint(
+            data[readPosition:readPosition + 10])
+        readPosition += varIntLength
+        # chomp stream number
+        streamNumber, varIntLength = decodeVarint(
+            data[readPosition:readPosition + 10])
+        readPosition += varIntLength
+
+        if data[readPosition:] in shared.ackdataForWhichImWatching:
+            logger.info('This object is an acknowledgement bound for me.')
+            del shared.ackdataForWhichImWatching[data[readPosition:]]
+            sqlExecute('UPDATE sent SET status=?, lastactiontime=? WHERE ackdata=?',
+                       'ackreceived',
+                       int(time.time()), 
+                       data[readPosition:])
+            queues.UISignalQueue.put(('updateSentItemStatusByAckdata', (data[readPosition:], tr._translate("MainWindow",'Acknowledgement of the message received %1').arg(l10n.formatTimestamp()))))
+        else:
+            logger.debug('This object is not an acknowledgement bound for me.')
+
     
     def processgetpubkey(self, data):
+        if len(data) > 200:
+            logger.info('getpubkey is abnormally long. Sanity check failed. Ignoring object.')
+            return
         readPosition = 20  # bypass the nonce, time, and object type
         requestedAddressVersionNumber, addressVersionLength = decodeVarint(
             data[readPosition:readPosition + 10])
@@ -113,7 +147,7 @@ class objectProcessor(threading.Thread):
             if len(requestedHash) != 20:
                 logger.debug('The length of the requested hash is not 20 bytes. Something is wrong. Ignoring.')
                 return
-            logger.info('the hash requested in this getpubkey request is: %s' % requestedHash.encode('hex'))
+            logger.info('the hash requested in this getpubkey request is: %s' % hexlify(requestedHash))
             if requestedHash in shared.myAddressesByHash:  # if this address hash is one of mine
                 myAddress = shared.myAddressesByHash[requestedHash]
         elif requestedAddressVersionNumber >= 4:
@@ -121,7 +155,7 @@ class objectProcessor(threading.Thread):
             if len(requestedTag) != 32:
                 logger.debug('The length of the requested tag is not 32 bytes. Something is wrong. Ignoring.')
                 return
-            logger.debug('the tag requested in this getpubkey request is: %s' % requestedTag.encode('hex'))
+            logger.debug('the tag requested in this getpubkey request is: %s' % hexlify(requestedTag))
             if requestedTag in shared.myAddressesByTag:
                 myAddress = shared.myAddressesByTag[requestedTag]
 
@@ -135,11 +169,11 @@ class objectProcessor(threading.Thread):
         if decodeAddress(myAddress)[2] != streamNumber:
             logger.warning('(Within the processgetpubkey function) Someone requested one of my pubkeys but the stream number on which we heard this getpubkey object doesn\'t match this address\' stream number. Ignoring.')
             return
-        if shared.safeConfigGetBoolean(myAddress, 'chan'):
+        if BMConfigParser().safeGetBoolean(myAddress, 'chan'):
             logger.info('Ignoring getpubkey request because it is for one of my chan addresses. The other party should already have the pubkey.')
             return
         try:
-            lastPubkeySendTime = int(shared.config.get(
+            lastPubkeySendTime = int(BMConfigParser().get(
                 myAddress, 'lastpubkeysendtime'))
         except:
             lastPubkeySendTime = 0
@@ -148,19 +182,19 @@ class objectProcessor(threading.Thread):
             return
         logger.info('Found getpubkey-requested-hash in my list of EC hashes. Telling Worker thread to do the POW for a pubkey message and send it out.') 
         if requestedAddressVersionNumber == 2:
-            shared.workerQueue.put((
+            queues.workerQueue.put((
                 'doPOWForMyV2Pubkey', requestedHash))
         elif requestedAddressVersionNumber == 3:
-            shared.workerQueue.put((
+            queues.workerQueue.put((
                 'sendOutOrStoreMyV3Pubkey', requestedHash))
         elif requestedAddressVersionNumber == 4:
-            shared.workerQueue.put((
+            queues.workerQueue.put((
                 'sendOutOrStoreMyV4Pubkey', myAddress))
 
     def processpubkey(self, data):
         pubkeyProcessingStartTime = time.time()
         shared.numberOfPubkeysProcessed += 1
-        shared.UISignalQueue.put((
+        queues.UISignalQueue.put((
             'updateNumberOfPubkeysProcessed', 'no data'))
         embeddedTime, = unpack('>Q', data[8:16])
         readPosition = 20  # bypass the nonce, time, and object type
@@ -206,9 +240,9 @@ class objectProcessor(threading.Thread):
                         publicSigningKey in hex: %s\n\
                         publicEncryptionKey in hex: %s' % (addressVersion, 
                                                            streamNumber, 
-                                                           ripe.encode('hex'), 
-                                                           publicSigningKey.encode('hex'), 
-                                                           publicEncryptionKey.encode('hex')
+                                                           hexlify(ripe),
+                                                           hexlify(publicSigningKey),
+                                                           hexlify(publicEncryptionKey)
                                                            )
                         )
 
@@ -247,7 +281,7 @@ class objectProcessor(threading.Thread):
                 data[readPosition:readPosition + 10])
             readPosition += signatureLengthLength
             signature = data[readPosition:readPosition + signatureLength]
-            if highlevelcrypto.verify(data[8:endOfSignedDataPosition], signature, publicSigningKey.encode('hex')):
+            if highlevelcrypto.verify(data[8:endOfSignedDataPosition], signature, hexlify(publicSigningKey)):
                 logger.debug('ECDSA verify passed (within processpubkey)')
             else:
                 logger.warning('ECDSA verify failed (within processpubkey)')
@@ -265,9 +299,9 @@ class objectProcessor(threading.Thread):
                         publicSigningKey in hex: %s\n\
                         publicEncryptionKey in hex: %s' % (addressVersion, 
                                                            streamNumber, 
-                                                           ripe.encode('hex'), 
-                                                           publicSigningKey.encode('hex'), 
-                                                           publicEncryptionKey.encode('hex')
+                                                           hexlify(ripe),
+                                                           hexlify(publicSigningKey),
+                                                           hexlify(publicEncryptionKey)
                                                            )
                         )
 
@@ -288,12 +322,12 @@ class objectProcessor(threading.Thread):
                 return
 
             tag = data[readPosition:readPosition + 32]
-            if tag not in shared.neededPubkeys:
+            if tag not in state.neededPubkeys:
                 logger.info('We don\'t need this v4 pubkey. We didn\'t ask for it.')
                 return
             
             # Let us try to decrypt the pubkey
-            toAddress, cryptorObject = shared.neededPubkeys[tag]
+            toAddress, cryptorObject = state.neededPubkeys[tag]
             if shared.decryptAndCheckPubkeyPayload(data, toAddress) == 'successful':
                 # At this point we know that we have been waiting on this pubkey.
                 # This function will command the workerThread to start work on
@@ -309,7 +343,7 @@ class objectProcessor(threading.Thread):
     def processmsg(self, data):
         messageProcessingStartTime = time.time()
         shared.numberOfMessagesProcessed += 1
-        shared.UISignalQueue.put((
+        queues.UISignalQueue.put((
             'updateNumberOfMessagesProcessed', 'no data'))
         readPosition = 20 # bypass the nonce, time, and object type
         msgVersion, msgVersionLength = decodeVarint(data[readPosition:readPosition + 9])
@@ -323,30 +357,19 @@ class objectProcessor(threading.Thread):
         readPosition += streamNumberAsClaimedByMsgLength
         inventoryHash = calculateInventoryHash(data)
         initialDecryptionSuccessful = False
-        # Let's check whether this is a message acknowledgement bound for us.
-        if data[-32:] in shared.ackdataForWhichImWatching:
-            logger.info('This msg IS an acknowledgement bound for me.')
-            del shared.ackdataForWhichImWatching[data[-32:]]
-            sqlExecute('UPDATE sent SET status=?, lastactiontime=? WHERE ackdata=?',
-                       'ackreceived',
-                       int(time.time()), 
-                       data[-32:])
-            shared.UISignalQueue.put(('updateSentItemStatusByAckdata', (data[-32:], tr.translateText("MainWindow",'Acknowledgement of the message received. %1').arg(l10n.formatTimestamp()))))
-            return
-        else:
-            logger.info('This was NOT an acknowledgement bound for me.')
-
 
         # This is not an acknowledgement bound for me. See if it is a message
         # bound for me by trying to decrypt it with my private keys.
         
-        for key, cryptorObject in shared.myECCryptorObjects.items():
+        for key, cryptorObject in sorted(shared.myECCryptorObjects.items(), key=lambda x: random.random()):
             try:
-                decryptedData = cryptorObject.decrypt(data[readPosition:])
-                toRipe = key  # This is the RIPE hash of my pubkeys. We need this below to compare to the destination_ripe included in the encrypted data.
-                initialDecryptionSuccessful = True
-                logger.info('EC decryption successful using key associated with ripe hash: %s.' % key.encode('hex'))
-                break
+                if initialDecryptionSuccessful: # continue decryption attempts to avoid timing attacks
+                    cryptorObject.decrypt(data[readPosition:])
+                else:
+                    decryptedData = cryptorObject.decrypt(data[readPosition:])
+                    toRipe = key  # This is the RIPE hash of my pubkeys. We need this below to compare to the destination_ripe included in the encrypted data.
+                    initialDecryptionSuccessful = True
+                    logger.info('EC decryption successful using key associated with ripe hash: %s.' % hexlify(key))
             except Exception as err:
                 pass
         if not initialDecryptionSuccessful:
@@ -398,7 +421,7 @@ class objectProcessor(threading.Thread):
             logger.info('The original sender of this message did not send it to you. Someone is attempting a Surreptitious Forwarding Attack.\n\
                 See: http://world.std.com/~dtd/sign_encrypt/sign_encrypt7.html \n\
                 your toRipe: %s\n\
-                embedded destination toRipe: %s' % (toRipe.encode('hex'), decryptedData[readPosition:readPosition + 20].encode('hex'))
+                embedded destination toRipe: %s' % (hexlify(toRipe), hexlify(decryptedData[readPosition:readPosition + 20]))
                        )
             return
         readPosition += 20
@@ -424,7 +447,7 @@ class objectProcessor(threading.Thread):
             readPosition:readPosition + signatureLength]
         signedData = data[8:20] + encodeVarint(1) + encodeVarint(streamNumberAsClaimedByMsg) + decryptedData[:positionOfBottomOfAckData]
         
-        if not highlevelcrypto.verify(signedData, signature, pubSigningKey.encode('hex')):
+        if not highlevelcrypto.verify(signedData, signature, hexlify(pubSigningKey)):
             logger.debug('ECDSA verify failed')
             return
         logger.debug('ECDSA verify passed')
@@ -461,17 +484,17 @@ class objectProcessor(threading.Thread):
         # proof of work requirement. If this is bound for one of my chan
         # addresses then we skip this check; the minimum network POW is
         # fine.
-        if decodeAddress(toAddress)[1] >= 3 and not shared.safeConfigGetBoolean(toAddress, 'chan'):  # If the toAddress version number is 3 or higher and not one of my chan addresses:
+        if decodeAddress(toAddress)[1] >= 3 and not BMConfigParser().safeGetBoolean(toAddress, 'chan'):  # If the toAddress version number is 3 or higher and not one of my chan addresses:
             if not shared.isAddressInMyAddressBookSubscriptionsListOrWhitelist(fromAddress):  # If I'm not friendly with this person:
-                requiredNonceTrialsPerByte = shared.config.getint(
+                requiredNonceTrialsPerByte = BMConfigParser().getint(
                     toAddress, 'noncetrialsperbyte')
-                requiredPayloadLengthExtraBytes = shared.config.getint(
+                requiredPayloadLengthExtraBytes = BMConfigParser().getint(
                     toAddress, 'payloadlengthextrabytes')
-                if not shared.isProofOfWorkSufficient(data, requiredNonceTrialsPerByte, requiredPayloadLengthExtraBytes):
+                if not protocol.isProofOfWorkSufficient(data, requiredNonceTrialsPerByte, requiredPayloadLengthExtraBytes):
                     logger.info('Proof of work in msg is insufficient only because it does not meet our higher requirement.')
                     return
         blockMessage = False  # Gets set to True if the user shouldn't see the message according to black or white lists.
-        if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':  # If we are using a blacklist
+        if BMConfigParser().get('bitmessagesettings', 'blackwhitelist') == 'black':  # If we are using a blacklist
             queryreturn = sqlQuery(
                 '''SELECT label FROM blacklist where address=? and enabled='1' ''',
                 fromAddress)
@@ -486,24 +509,15 @@ class objectProcessor(threading.Thread):
             if queryreturn == []:
                 logger.info('Message ignored because address not in whitelist.')
                 blockMessage = True
-        
-        toLabel = shared.config.get(toAddress, 'label')
+
+        toLabel = BMConfigParser().get(toAddress, 'label')
         if toLabel == '':
             toLabel = toAddress
 
-        if messageEncodingType == 2:
-            subject, body = self.decodeType2Message(message)
-            logger.info('Message subject (first 100 characters): %s' % repr(subject)[:100])
-        elif messageEncodingType == 1:
-            body = message
-            subject = ''
-        elif messageEncodingType == 0:
-            logger.info('messageEncodingType == 0. Doing nothing with the message. They probably just sent it so that we would store their public key or send their ack data for them.')
-            subject = ''
-            body = '' 
-        else:
-            body = 'Unknown encoding type.\n\n' + repr(message)
-            subject = ''
+        decodedMessage = helper_msgcoding.MsgDecode(messageEncodingType, message)
+        subject = decodedMessage.subject
+        body = decodedMessage.body
+
         # Let us make sure that we haven't already received this message
         if helper_inbox.isMessageAlreadyInInbox(sigHash):
             logger.info('This msg is already in our inbox. Ignoring it.')
@@ -514,15 +528,15 @@ class objectProcessor(threading.Thread):
                     time.time()), body, 'inbox', messageEncodingType, 0, sigHash)
                 helper_inbox.insert(t)
 
-                shared.UISignalQueue.put(('displayNewInboxMessage', (
+                queues.UISignalQueue.put(('displayNewInboxMessage', (
                     inventoryHash, toAddress, fromAddress, subject, body)))
 
             # If we are behaving as an API then we might need to run an
             # outside command to let some program know that a new message
             # has arrived.
-            if shared.safeConfigGetBoolean('bitmessagesettings', 'apienabled'):
+            if BMConfigParser().safeGetBoolean('bitmessagesettings', 'apienabled'):
                 try:
-                    apiNotifyPath = shared.config.get(
+                    apiNotifyPath = BMConfigParser().get(
                         'bitmessagesettings', 'apinotifypath')
                 except:
                     apiNotifyPath = ''
@@ -531,9 +545,9 @@ class objectProcessor(threading.Thread):
 
             # Let us now check and see whether our receiving address is
             # behaving as a mailing list
-            if shared.safeConfigGetBoolean(toAddress, 'mailinglist'):
+            if BMConfigParser().safeGetBoolean(toAddress, 'mailinglist') and messageEncodingType != 0:
                 try:
-                    mailingListName = shared.config.get(
+                    mailingListName = BMConfigParser().get(
                         toAddress, 'mailinglistname')
                 except:
                     mailingListName = ''
@@ -566,15 +580,20 @@ class objectProcessor(threading.Thread):
                      'broadcastqueued', 
                      0, 
                      'sent', 
-                     2, 
+                     messageEncodingType, 
                      TTL)
                 helper_sent.insert(t)
 
-                shared.UISignalQueue.put(('displayNewSentMessage', (
+                queues.UISignalQueue.put(('displayNewSentMessage', (
                     toAddress, '[Broadcast subscribers]', fromAddress, subject, message, ackdataForBroadcast)))
-                shared.workerQueue.put(('sendbroadcast', ''))
+                queues.workerQueue.put(('sendbroadcast', ''))
 
-        if self.ackDataHasAVaildHeader(ackData):
+        # Don't send ACK if invalid, blacklisted senders, invisible messages, disabled or chan
+        if self.ackDataHasAValidHeader(ackData) and \
+            not blockMessage and \
+            messageEncodingType != 0 and \
+            not BMConfigParser().safeGetBoolean(toAddress, 'dontsendack') and \
+            not BMConfigParser().safeGetBoolean(toAddress, 'chan'):
             shared.checkAndShareObjectWithPeers(ackData[24:])
 
         # Display timing data
@@ -594,7 +613,7 @@ class objectProcessor(threading.Thread):
     def processbroadcast(self, data):
         messageProcessingStartTime = time.time()
         shared.numberOfBroadcastsProcessed += 1
-        shared.UISignalQueue.put((
+        queues.UISignalQueue.put((
             'updateNumberOfBroadcastsProcessed', 'no data'))
         inventoryHash = calculateInventoryHash(data)
         readPosition = 20  # bypass the nonce, time, and object type
@@ -615,13 +634,15 @@ class objectProcessor(threading.Thread):
             """
             signedData = data[8:readPosition]
             initialDecryptionSuccessful = False
-            for key, cryptorObject in shared.MyECSubscriptionCryptorObjects.items():
+            for key, cryptorObject in sorted(shared.MyECSubscriptionCryptorObjects.items(), key=lambda x: random.random()):
                 try:
-                    decryptedData = cryptorObject.decrypt(data[readPosition:])
-                    toRipe = key  # This is the RIPE hash of the sender's pubkey. We need this below to compare to the RIPE hash of the sender's address to verify that it was encrypted by with their key rather than some other key.
-                    initialDecryptionSuccessful = True
-                    logger.info('EC decryption successful using key associated with ripe hash: %s' % key.encode('hex'))
-                    break
+                    if initialDecryptionSuccessful: # continue decryption attempts to avoid timing attacks
+                        cryptorObject.decrypt(data[readPosition:])
+                    else:
+                        decryptedData = cryptorObject.decrypt(data[readPosition:])
+                        toRipe = key  # This is the RIPE hash of the sender's pubkey. We need this below to compare to the RIPE hash of the sender's address to verify that it was encrypted by with their key rather than some other key.
+                        initialDecryptionSuccessful = True
+                        logger.info('EC decryption successful using key associated with ripe hash: %s' % hexlify(key))
                 except Exception as err:
                     pass
                     # print 'cryptorObject.decrypt Exception:', err
@@ -716,7 +737,7 @@ class objectProcessor(threading.Thread):
         signature = decryptedData[
             readPosition:readPosition + signatureLength]
         signedData += decryptedData[:readPositionAtBottomOfMessage]
-        if not highlevelcrypto.verify(signedData, signature, sendersPubSigningKey.encode('hex')):
+        if not highlevelcrypto.verify(signedData, signature, hexlify(sendersPubSigningKey)):
             logger.debug('ECDSA verify failed')
             return
         logger.debug('ECDSA verify passed')
@@ -741,21 +762,11 @@ class objectProcessor(threading.Thread):
 
         fromAddress = encodeAddress(
             sendersAddressVersion, sendersStream, calculatedRipe)
-        with shared.printLock:
-            print 'fromAddress:', fromAddress
+        logger.debug('fromAddress: ' + fromAddress)
 
-        if messageEncodingType == 2:
-            subject, body = self.decodeType2Message(message)
-            logger.info('Broadcast subject (first 100 characters): %s' % repr(subject)[:100])
-        elif messageEncodingType == 1:
-            body = message
-            subject = ''
-        elif messageEncodingType == 0:
-            logger.info('messageEncodingType == 0. Doing nothing with the message.')
-            return
-        else:
-            body = 'Unknown encoding type.\n\n' + repr(message)
-            subject = ''
+        decodedMessage = helper_msgcoding.MsgDecode(messageEncodingType, message)
+        subject = decodedMessage.subject
+        body = decodedMessage.body
 
         toAddress = '[Broadcast subscribers]'
         if helper_inbox.isMessageAlreadyInInbox(sigHash):
@@ -765,15 +776,15 @@ class objectProcessor(threading.Thread):
             time.time()), body, 'inbox', messageEncodingType, 0, sigHash)
         helper_inbox.insert(t)
 
-        shared.UISignalQueue.put(('displayNewInboxMessage', (
+        queues.UISignalQueue.put(('displayNewInboxMessage', (
             inventoryHash, toAddress, fromAddress, subject, body)))
 
         # If we are behaving as an API then we might need to run an
         # outside command to let some program know that a new message
         # has arrived.
-        if shared.safeConfigGetBoolean('bitmessagesettings', 'apienabled'):
+        if BMConfigParser().safeGetBoolean('bitmessagesettings', 'apienabled'):
             try:
-                apiNotifyPath = shared.config.get(
+                apiNotifyPath = BMConfigParser().get(
                     'bitmessagesettings', 'apinotifypath')
             except:
                 apiNotifyPath = ''
@@ -795,8 +806,8 @@ class objectProcessor(threading.Thread):
         # stream number, and RIPE hash.
         status, addressVersion, streamNumber, ripe = decodeAddress(address)
         if addressVersion <=3:
-            if address in shared.neededPubkeys:
-                del shared.neededPubkeys[address]
+            if address in state.neededPubkeys:
+                del state.neededPubkeys[address]
                 self.sendMessages(address)
             else:
                 logger.debug('We don\'t need this pub key. We didn\'t ask for it. For address: %s' % address)
@@ -806,8 +817,8 @@ class objectProcessor(threading.Thread):
         elif addressVersion >= 4:
             tag = hashlib.sha512(hashlib.sha512(encodeVarint(
                 addressVersion) + encodeVarint(streamNumber) + ripe).digest()).digest()[32:]
-            if tag in shared.neededPubkeys:
-                del shared.neededPubkeys[tag]
+            if tag in state.neededPubkeys:
+                del state.neededPubkeys[tag]
                 self.sendMessages(address)
 
     def sendMessages(self, address):
@@ -820,18 +831,18 @@ class objectProcessor(threading.Thread):
         sqlExecute(
             '''UPDATE sent SET status='doingmsgpow', retrynumber=0 WHERE toaddress=? AND (status='awaitingpubkey' or status='doingpubkeypow') AND folder='sent' ''',
             address)
-        shared.workerQueue.put(('sendmessage', ''))
+        queues.workerQueue.put(('sendmessage', ''))
 
-    def ackDataHasAVaildHeader(self, ackData):
-        if len(ackData) < shared.Header.size:
+    def ackDataHasAValidHeader(self, ackData):
+        if len(ackData) < protocol.Header.size:
             logger.info('The length of ackData is unreasonably short. Not sending ackData.')
             return False
         
-        magic,command,payloadLength,checksum = shared.Header.unpack(ackData[:shared.Header.size])
+        magic,command,payloadLength,checksum = protocol.Header.unpack(ackData[:protocol.Header.size])
         if magic != 0xE9BEB4D9:
             logger.info('Ackdata magic bytes were wrong. Not sending ackData.')
             return False
-        payload = ackData[shared.Header.size:]
+        payload = ackData[protocol.Header.size:]
         if len(payload) != payloadLength:
             logger.info('ackData payload length doesn\'t match the payload length specified in the header. Not sending ackdata.')
             return False
